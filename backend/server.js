@@ -11,11 +11,16 @@ app.use(express.static(DIST));
 app.use(cors());
 
 const http = require('http');
-app.use('/ml', (req, res) => {
+app.use('/ml', (req, res, next) => {
+  // Prevent browser users from seeing the raw ML API JSON if they navigate to /ml
+  if (req.method === 'GET' && (req.url === '/' || req.url === '')) {
+    return res.redirect('/');
+  }
+
   const proxyReq = http.request({
     host: 'localhost',
     port: 8000,
-    path: (req.url === '/' || req.url === '') ? '/' : `/ml${req.url}`,
+    path: `/ml${req.url}`,
     method: req.method,
     headers: {
       ...req.headers,
