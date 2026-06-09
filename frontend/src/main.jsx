@@ -4,7 +4,7 @@ import { Leaf, Upload, Truck, BarChart3, Satellite, IndianRupee, Trophy, Users, 
 import './style.css';
 
 const API = 'http://localhost:5000/api';
-const ML_API = 'http://localhost:8000/ml';
+const ML_API = 'http://localhost:5000/ml';
 
 function App(){
   const [page,setPage]=useState('home');

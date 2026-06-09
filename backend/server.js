@@ -1,9 +1,38 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const app = express();
 const PORT = 5000;
 
+// Serve the built React frontend
+const DIST = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(DIST));
+
 app.use(cors());
+
+const http = require('http');
+app.use('/ml', (req, res) => {
+  const proxyReq = http.request({
+    host: 'localhost',
+    port: 8000,
+    path: (req.url === '/' || req.url === '') ? '/' : `/ml${req.url}`,
+    method: req.method,
+    headers: {
+      ...req.headers,
+      host: 'localhost:8000'
+    }
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+  
+  req.pipe(proxyReq);
+  
+  proxyReq.on('error', (err) => {
+    res.status(500).json({ error: 'Failed to connect to ML service: ' + err.message });
+  });
+});
+
 app.use(express.json());
 
 let listings = [
@@ -25,7 +54,6 @@ const centers = [
   { id: 3, name: 'Village Compost Unit', process: 'Compost', location: 'Laxmi Nagar', distance: '5 km' }
 ];
 
-app.get('/', (req, res) => res.json({ message: 'AgriWasteX Backend Running' }));
 
 app.get('/api/listings', (req, res) => res.json(listings));
 
@@ -77,4 +105,9 @@ app.get('/api/rewards', (req, res) => res.json({ points: 1250, redeem: ['Seeds D
 app.get('/api/price-prediction', (req, res) => res.json({ currentPrice: '₹3/kg', afterTwoWeeks: '₹4.5/kg', suggestion: 'Store if safe, price may increase.' }));
 app.get('/api/gis-alerts', (req, res) => res.json([{ area: 'Mathura Rural', alert: 'Possible stubble burning detected', risk: 'High' }, { area: 'Agra Border', alert: 'Smoke hotspot detected', risk: 'Medium' }]));
 
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+// Catch-all: serve index.html for any non-API route (React SPA)
+app.get('/{*splat}', (req, res) => {
+  res.sendFile(path.join(DIST, 'index.html'));
+});
+
+app.listen(PORT, () => console.log(`\n🌿 AgriWasteX running at http://localhost:${PORT}\n`));
