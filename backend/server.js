@@ -1,44 +1,61 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { execFile } = require('child_process');
+const multer = require('multer');
+
+// Load .env if dotenv is available
+try { require('dotenv').config(); } catch (e) { /* dotenv not installed, use defaults */ }
+
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
+const PYTHON_CMD = process.env.PYTHON_CMD || 'python';
+const ML_SERVICE_DIR = path.join(__dirname, '..', 'ml-service');
+const CLI_RUNNER = path.join(ML_SERVICE_DIR, 'cli_runner.py');
+
+// Multer for file uploads (AI Scanner)
+const upload = multer({ dest: path.join(__dirname, 'uploads') });
+
+// ─── Middleware ──────────────────────────────────────────────────────────────
 
 // Serve the built React frontend
 const DIST = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(DIST));
 
-app.use(cors());
-
-const http = require('http');
-app.use('/ml', (req, res, next) => {
-  // Prevent browser users from seeing the raw ML API JSON if they navigate to /ml
-  if (req.method === 'GET' && (req.url === '/' || req.url === '')) {
-    return res.redirect('/');
-  }
-
-  const proxyReq = http.request({
-    host: 'localhost',
-    port: 8000,
-    path: `/ml${req.url}`,
-    method: req.method,
-    headers: {
-      ...req.headers,
-      host: 'localhost:8000'
-    }
-  }, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    proxyRes.pipe(res);
-  });
-  
-  req.pipe(proxyReq);
-  
-  proxyReq.on('error', (err) => {
-    res.status(500).json({ error: 'Failed to connect to ML service: ' + err.message });
-  });
-});
+// CORS: allow same-origin in production, allow dev origins during development
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? false  // same-origin, no CORS headers needed
+    : ['http://localhost:5173', 'http://localhost:5000', 'http://127.0.0.1:5173'],
+  credentials: true
+}));
 
 app.use(express.json());
+
+// ─── Helper: Run Python ML CLI ──────────────────────────────────────────────
+
+function runML(operation, payload) {
+  return new Promise((resolve, reject) => {
+    const args = [CLI_RUNNER, operation, JSON.stringify(payload)];
+    execFile(PYTHON_CMD, args, { cwd: ML_SERVICE_DIR, timeout: 30000 }, (err, stdout, stderr) => {
+      if (err) {
+        console.error(`[ML ${operation}] Error:`, err.message);
+        if (stderr) console.error(`[ML ${operation}] Stderr:`, stderr);
+        return reject(new Error(stderr || err.message));
+      }
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) return reject(new Error(result.error));
+        resolve(result);
+      } catch (parseErr) {
+        console.error(`[ML ${operation}] Parse error. stdout:`, stdout);
+        reject(new Error('Failed to parse ML output'));
+      }
+    });
+  });
+}
+
+// ─── In-Memory Data ─────────────────────────────────────────────────────────
 
 let listings = [
   { id: 1, farmer: 'Farmer A', wasteType: 'Paddy Straw', quantity: 100, location: 'Mathura', pricePerKg: 3, grade: 'A', status: 'Available' },
@@ -59,6 +76,7 @@ const centers = [
   { id: 3, name: 'Village Compost Unit', process: 'Compost', location: 'Laxmi Nagar', distance: '5 km' }
 ];
 
+// ─── Existing Data API Routes ───────────────────────────────────────────────
 
 app.get('/api/listings', (req, res) => res.json(listings));
 
@@ -110,9 +128,65 @@ app.get('/api/rewards', (req, res) => res.json({ points: 1250, redeem: ['Seeds D
 app.get('/api/price-prediction', (req, res) => res.json({ currentPrice: '₹3/kg', afterTwoWeeks: '₹4.5/kg', suggestion: 'Store if safe, price may increase.' }));
 app.get('/api/gis-alerts', (req, res) => res.json([{ area: 'Mathura Rural', alert: 'Possible stubble burning detected', risk: 'High' }, { area: 'Agra Border', alert: 'Smoke hotspot detected', risk: 'Medium' }]));
 
-// Catch-all: serve index.html for any non-API route (React SPA)
+// ─── ML-Powered API Routes (internally calling Python) ──────────────────────
+
+// POST /api/predict — AI Waste Detection (file upload)
+app.post('/api/predict', upload.single('file'), async (req, res) => {
+  try {
+    const filename = req.file ? req.file.originalname : 'unknown.jpg';
+    const result = await runML('detect_waste', { filename });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/price-prediction-ml — ML Price Prediction
+app.post('/api/price-prediction-ml', async (req, res) => {
+  try {
+    const result = await runML('predict_price', req.body);
+    res.json(result);
+  } catch (err) {
+    const status = err.message.includes('model') || err.message.includes('not found') ? 503 : 500;
+    res.status(status).json({ error: err.message, detail: err.message });
+  }
+});
+
+// POST /api/shared-pickup-ml — ML Shared Pickup Clustering
+app.post('/api/shared-pickup-ml', async (req, res) => {
+  try {
+    const result = await runML('shared_pickup', req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/green-score — ML Green Score
+app.post('/api/green-score', async (req, res) => {
+  try {
+    const result = await runML('green_score', req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/impact-ml — ML Impact Calculator
+app.post('/api/impact-ml', async (req, res) => {
+  try {
+    const result = await runML('impact', req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── SPA Catch-All ──────────────────────────────────────────────────────────
+// Serve index.html for any non-API route (React SPA)
 app.get('/{*splat}', (req, res) => {
   res.sendFile(path.join(DIST, 'index.html'));
 });
 
+// ─── Start Server ───────────────────────────────────────────────────────────
 app.listen(PORT, () => console.log(`\n🌿 AgriWasteX running at http://localhost:${PORT}\n`));

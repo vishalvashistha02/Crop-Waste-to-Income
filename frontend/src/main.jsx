@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { Leaf, Upload, Truck, BarChart3, Satellite, IndianRupee, Trophy, Users, TrendingUp, Factory, Mic, Building2, MapPin, Camera, ShieldCheck, Sparkles, Navigation, Coins, Zap, Gift, CheckCircle, XCircle, ArrowRight, Quote, Star } from 'lucide-react';
 import './style.css';
 
-const API = 'http://localhost:5000/api';
-const ML_API = 'http://localhost:5000/ml';
+const API = '/api';
+const ML_API = '/api';
 
 function App(){
   const [page,setPage]=useState('home');
@@ -279,7 +279,7 @@ function Farmer(){
     setIsPredicting(true);
     setMlPriceInfo(null);
     try {
-      const res = await fetch(`${ML_API}/predict-price`, {
+      const res = await fetch(`${ML_API}/price-prediction-ml`, {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
@@ -300,7 +300,7 @@ function Farmer(){
       setMlPriceInfo(data);
       setErrors(prev => ({...prev, pricePerKg: ''}));
     } catch(err) {
-      setErrors(prev => ({...prev, pricePerKg: err.message.includes('model') ? err.message : 'Failed to connect to ML service. Is the backend running on port 8000?'}));
+      setErrors(prev => ({...prev, pricePerKg: err.message.includes('model') ? err.message : 'Failed to connect to ML service. Is the backend running?'}));
     }
     setIsPredicting(false);
   };
@@ -696,7 +696,7 @@ function Scanner(){
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch(`${ML_API}/detect-waste`, { method: 'POST', body: formData });
+      const res = await fetch(`${ML_API}/predict`, { method: 'POST', body: formData });
       if (!res.ok) throw new Error('ML API Error');
       const result = await res.json();
       setData(result);
@@ -779,7 +779,7 @@ function Pickup(){
           quantityKg: Number(f.qty)
         }))
       };
-      const res = await fetch(`${ML_API}/shared-pickup`, {
+      const res = await fetch(`${ML_API}/shared-pickup-ml`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
@@ -1497,7 +1497,7 @@ function GreenRewards() {
   const [mlScoreData, setMlScoreData] = useState(null);
   const fetchMlScore = async () => {
     try {
-      const res = await fetch(`${ML_API}/green-score`, {
+      const res = await fetch(`${API}/green-score`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -1791,7 +1791,7 @@ function Impact() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${ML_API}/impact`, {
+    fetch(`${API}/impact-ml`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ wasteKg: 50000, numberOfSales: 150 })

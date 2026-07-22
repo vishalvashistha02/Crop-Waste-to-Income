@@ -1,0 +1,16 @@
+{
+  "name": "agriwastex",
+  "version": "1.0.0",
+  "description": "AgriWasteX - AI Crop Waste Marketplace (Single Deployment)",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "cd backend && node server.js",
+    "dev": "cd backend && npm run dev",
+    "install:all": "cd frontend && npm install && cd ../backend && npm install",
+    "ir": "npm run install:all && npm run build && npm start",
+    "postinstall": "cd frontend && npm install && cd ../backend && npm install"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
