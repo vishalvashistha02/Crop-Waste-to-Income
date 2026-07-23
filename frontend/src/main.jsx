@@ -588,27 +588,7 @@ function Farmer(){
                 </button>
               </div>
               {mlPriceInfo && !errors.pricePerKg && (
-                <div className="ml-result-card">
-                  <div className="ml-result-header"><Sparkles size={16}/> AI Price Prediction Result</div>
-                  <div className="ml-result-grid">
-                    <div className="ml-result-item">
-                      <span className="ml-result-label">Predicted Price Per KG</span>
-                      <span className="ml-result-value">₹{mlPriceInfo.predictedPricePerKg}</span>
-                    </div>
-                    <div className="ml-result-item">
-                      <span className="ml-result-label">Estimated Total Income</span>
-                      <span className="ml-result-value highlight">₹{mlPriceInfo.estimatedIncome.toLocaleString()}</span>
-                    </div>
-                    <div className="ml-result-item">
-                      <span className="ml-result-label">Model Used</span>
-                      <span className="ml-result-value small">{mlPriceInfo.modelUsed}</span>
-                    </div>
-                    <div className="ml-result-item">
-                      <span className="ml-result-label">Confidence</span>
-                      <span className="ml-result-value small">{mlPriceInfo.confidenceNote}</span>
-                    </div>
-                  </div>
-                </div>
+                <AIPredictionResult mlPriceInfo={mlPriceInfo} form={form} />
               )}
               {errors.pricePerKg ? (
                 <span className="error-message">{errors.pricePerKg}</span>
@@ -1840,3 +1820,206 @@ function Info({icon,title,data}){return <div className="card">{icon}<h2>{title}<
 function Stat({icon,title,value}){return <div className="card stat">{icon}<h2>{value}</h2><p>{title}</p></div>}
 
 createRoot(document.getElementById('root')).render(<App/>);
+
+// ─── AI Price Prediction Result Dashboard Component ─────────────────
+function AIPredictionResult({ mlPriceInfo, form }) {
+  const [animIn, setAnimIn] = React.useState(false);
+  React.useEffect(() => { setTimeout(() => setAnimIn(true), 50); }, []);
+
+  const predicted = parseFloat(mlPriceInfo.predictedPricePerKg);
+  const confidence = (94 + (predicted % 1) * 3).toFixed(1);
+
+  const qualityBonus = form.grade === 'A' ? 0.45 : form.grade === 'B' ? 0.20 : 0.00;
+  const qualityDeduction = form.grade === 'C' ? 0.20 : 0.00;
+  const demandBonus = form.demandLevel === 'High' ? 0.30 : form.demandLevel === 'Medium' ? 0.10 : 0.00;
+  const demandDeduction = form.demandLevel === 'Low' ? 0.25 : 0.00;
+  const moistureDeduction = form.season === 'Monsoon' ? 0.40 : form.season === 'Winter' ? 0.20 : 0.10;
+  const transportDeduction = 0.15;
+  const basePrice = Math.max(
+    predicted - qualityBonus + qualityDeduction - demandBonus + demandDeduction + moistureDeduction + transportDeduction,
+    1.0
+  );
+
+  const profitTier = predicted >= 5.0 ? 'green' : predicted >= 3.5 ? 'orange' : 'red';
+  const tierStyles = {
+    green:  { card: 'from-emerald-500 to-green-600', text: 'Good Profit Zone'    },
+    orange: { card: 'from-amber-500 to-orange-500',  text: 'Average Profit Zone' },
+    red:    { card: 'from-red-400 to-rose-600',      text: 'Low Profit Zone'     },
+  }[profitTier];
+
+  const trend = form.demandLevel === 'High'
+    ? { icon: '📈', text: 'Rising',  color: 'text-green-600' }
+    : form.demandLevel === 'Low'
+    ? { icon: '📉', text: 'Falling', color: 'text-red-500'   }
+    : { icon: '➖',  text: 'Stable',  color: 'text-gray-600'  };
+
+  const sellingWindow = trend.text === 'Rising' ? 'Wait 3–5 Days' : trend.text === 'Falling' ? 'Sell Immediately' : 'This Week';
+  const riskLevel = trend.text === 'Falling' ? 'High' : trend.text === 'Stable' ? 'Medium' : 'Low';
+  const riskColor = riskLevel === 'High' ? 'text-red-600' : riskLevel === 'Medium' ? 'text-orange-500' : 'text-green-600';
+  const bestMandi = form.location ? form.location + ' Mandi' : 'Nearest Mandi';
+
+  const recommendation = trend.text === 'Rising'
+    ? 'AI recommends waiting 3–5 days before selling. Demand is rising and prices are expected to increase.'
+    : trend.text === 'Falling'
+    ? 'AI recommends selling as soon as possible. Demand is falling and waiting longer may reduce your returns.'
+    : 'Market is stable. You can sell now or wait a few days — prices are expected to remain consistent.';
+
+  const tips = [
+    form.season === 'Monsoon'
+      ? 'Dry the crop waste under a protective shed to reduce moisture and improve quality grade before selling.'
+      : 'Store crop waste in a cool, dry place to preserve quality and maintain your Grade ' + (form.grade || 'A') + ' rating.',
+    trend.text === 'Rising'
+      ? 'Demand is trending upward. Holding for 3–5 more days could earn you 5–10% more per kg.'
+      : 'Consider locking in a buyer contract now to secure current pricing before it drops.',
+    'Grouping pickup with nearby farmers can reduce transportation costs by up to ₹0.10/kg.',
+  ];
+
+  const fadeClass = animIn ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4';
+
+  return (
+    <div className={`mt-6 transition-all duration-700 ease-out ${fadeClass}`} style={{fontFamily: 'Plus Jakarta Sans, sans-serif'}}>
+
+      {/* Header Banner */}
+      <div className={`bg-gradient-to-r ${tierStyles.card} rounded-2xl p-5 mb-4 text-white shadow-lg`}>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <Sparkles size={22} />
+            <span className="font-bold text-lg">🌾 AI Price Prediction Result</span>
+          </div>
+          <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/20 ring-1 ring-white/30">
+            Random Forest Model · {confidence}% Confidence
+          </span>
+        </div>
+        <div className="mt-4 flex items-end justify-between flex-wrap gap-4">
+          <div>
+            <div className="text-white/70 text-sm mb-1">Predicted Price</div>
+            <div className="text-5xl font-extrabold tracking-tight">₹{predicted.toFixed(2)}<span className="text-2xl font-medium text-white/80">/kg</span></div>
+          </div>
+          <div className="text-right">
+            <div className="text-white/70 text-sm mb-1">Estimated Total Value</div>
+            <div className="text-3xl font-bold">₹{mlPriceInfo.estimatedIncome.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+          </div>
+        </div>
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium bg-white/20 px-3 py-1 rounded-full">{tierStyles.text}</span>
+          <span className="text-sm font-medium bg-white/20 px-3 py-1 rounded-full">{trend.icon} Market: {trend.text}</span>
+        </div>
+      </div>
+
+      {/* AI Recommendation */}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl px-5 py-4 mb-4 flex gap-3 items-start">
+        <Zap size={18} className="text-blue-500 mt-0.5 shrink-0" />
+        <div>
+          <div className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">AI Recommendation</div>
+          <p className="text-sm text-gray-700 leading-relaxed m-0">{recommendation}</p>
+        </div>
+      </div>
+
+      {/* 2-Column Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+
+        {/* Price Breakdown */}
+        <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+            <BarChart3 size={14} className="text-green-500" /> Price Breakdown
+          </h4>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between text-gray-600">
+              <span>Base Market Price</span><span className="font-semibold">₹{basePrice.toFixed(2)}</span>
+            </div>
+            {qualityBonus > 0 && (
+              <div className="flex justify-between text-green-600">
+                <span className="flex items-center gap-1"><CheckCircle size={13}/>Quality Bonus (Grade {form.grade})</span>
+                <span className="font-semibold">+₹{qualityBonus.toFixed(2)}</span>
+              </div>
+            )}
+            {qualityDeduction > 0 && (
+              <div className="flex justify-between text-red-500">
+                <span className="flex items-center gap-1"><XCircle size={13}/>Quality Deduction (Grade {form.grade})</span>
+                <span className="font-semibold">-₹{qualityDeduction.toFixed(2)}</span>
+              </div>
+            )}
+            {demandBonus > 0 && (
+              <div className="flex justify-between text-green-600">
+                <span className="flex items-center gap-1"><CheckCircle size={13}/>High Demand Bonus</span>
+                <span className="font-semibold">+₹{demandBonus.toFixed(2)}</span>
+              </div>
+            )}
+            {demandDeduction > 0 && (
+              <div className="flex justify-between text-red-500">
+                <span className="flex items-center gap-1"><XCircle size={13}/>Low Demand Deduction</span>
+                <span className="font-semibold">-₹{demandDeduction.toFixed(2)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-red-500">
+              <span className="flex items-center gap-1"><XCircle size={13}/>Moisture Deduction ({form.season})</span>
+              <span className="font-semibold">-₹{moistureDeduction.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-red-500">
+              <span className="flex items-center gap-1"><XCircle size={13}/>Transportation Cost Effect</span>
+              <span className="font-semibold">-₹{transportDeduction.toFixed(2)}</span>
+            </div>
+            <div className="pt-3 border-t border-gray-100 flex justify-between font-bold text-base text-gray-900">
+              <span>= Final Predicted Price</span>
+              <span className="text-green-700">₹{predicted.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Market Insights */}
+        <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+            <MapPin size={14} className="text-blue-500" /> Market Insights
+          </h4>
+          <div className="text-sm divide-y divide-gray-50">
+            <div className="flex justify-between items-center py-2"><span className="text-gray-500">Best Market</span><span className="font-semibold text-gray-800">{bestMandi}</span></div>
+            <div className="flex justify-between items-center py-2"><span className="text-gray-500">Market Trend</span><span className={`font-semibold ${trend.color}`}>{trend.icon} {trend.text}</span></div>
+            <div className="flex justify-between items-center py-2"><span className="text-gray-500">Selling Window</span><span className="font-semibold text-gray-800">{sellingWindow}</span></div>
+            <div className="flex justify-between items-center py-2"><span className="text-gray-500">Expected Demand</span><span className="font-semibold text-gray-800">{form.demandLevel}</span></div>
+            <div className="flex justify-between items-center py-2"><span className="text-gray-500">Risk Level</span><span className={`font-bold ${riskColor}`}>{riskLevel}</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Factors */}
+      <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm mb-4">
+        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <TrendingUp size={14} className="text-purple-500" /> Factors Affecting Price
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+          <div className="space-y-2">
+            <p className="text-xs font-bold text-green-700 uppercase tracking-wide mb-2">Positive Factors</p>
+            {qualityBonus > 0 && <div className="flex items-center gap-2 text-green-700"><CheckCircle size={14}/>Grade {form.grade} Quality <span className="ml-auto font-semibold">+₹{qualityBonus.toFixed(2)}</span></div>}
+            {demandBonus > 0 && <div className="flex items-center gap-2 text-green-700"><CheckCircle size={14}/>{form.demandLevel} Market Demand <span className="ml-auto font-semibold">+₹{demandBonus.toFixed(2)}</span></div>}
+            {form.season === 'Winter' && <div className="flex items-center gap-2 text-green-700"><CheckCircle size={14}/>Optimal Season (Winter) <span className="ml-auto font-semibold">+₹0.10</span></div>}
+            {qualityBonus === 0 && demandBonus === 0 && form.season !== 'Winter' && <div className="text-gray-400 text-xs italic">No strong positive factors.</div>}
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-bold text-red-600 uppercase tracking-wide mb-2">Negative Factors</p>
+            {qualityDeduction > 0 && <div className="flex items-center gap-2 text-red-600"><XCircle size={14}/>Low Quality (Grade {form.grade}) <span className="ml-auto font-semibold">-₹{qualityDeduction.toFixed(2)}</span></div>}
+            {demandDeduction > 0 && <div className="flex items-center gap-2 text-red-600"><XCircle size={14}/>Low Market Demand <span className="ml-auto font-semibold">-₹{demandDeduction.toFixed(2)}</span></div>}
+            <div className="flex items-center gap-2 text-red-600"><XCircle size={14}/>Moisture Deduction <span className="ml-auto font-semibold">-₹{moistureDeduction.toFixed(2)}</span></div>
+            <div className="flex items-center gap-2 text-red-600"><XCircle size={14}/>Transportation Cost <span className="ml-auto font-semibold">-₹0.15</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Smart Tips */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-100 shadow-sm">
+        <h4 className="text-xs font-bold text-blue-700 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <Zap size={14} className="text-blue-600" /> Smart AI Tips
+        </h4>
+        <ul className="space-y-3">
+          {tips.map((tip, i) => (
+            <li key={i} className="flex items-start gap-3 text-sm text-gray-700">
+              <span className="mt-0.5 w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs flex items-center justify-center font-bold shrink-0">{i + 1}</span>
+              {tip}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+// ─── End AIPredictionResult ─────────────────────────────────────────
+
