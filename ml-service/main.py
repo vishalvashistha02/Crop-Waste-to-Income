@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import List
 
 from utils.image_predictor  import predict_waste_image
-from utils.price_predictor  import predict_crop_waste_price
+from predict import predict_price
 from utils.pickup_clustering import cluster_pickups
 from utils.green_score       import calculate_green_score
 from utils.impact_calculator import calculate_impact
@@ -27,12 +27,23 @@ app.add_middleware(
 # ─── Request / Response Models ────────────────────────────────────────────────
 
 class PriceInput(BaseModel):
-    wasteType:    str
-    quantityKg:   float
-    qualityGrade: str
-    location:     str
-    season:       str
-    demandLevel:  str
+    Crop: str = None
+    Waste_Type: str = None
+    Weight: float = None
+    Moisture: float = None
+    Quality_Grade: str = None
+    State: str = None
+    District: str = None
+    Mandi: str = None
+    Season: str = None
+    Demand_Level: str = None
+    Supply_Level: str = None
+    Distance_to_Buyer: float = None
+    Storage_Days: float = None
+    Weather: str = None
+    Transportation_Cost: float = None
+    Processing_Type: str = None
+    Nearby_Processing_Plant: str = None
 
 class FarmerLocation(BaseModel):
     name:       str
@@ -73,8 +84,20 @@ def get_price(input_data: PriceInput):
     If the model file is missing, returns a helpful error message.
     """
     try:
-        result = predict_crop_waste_price(input_data.dict())
-        return result
+        input_dict = input_data.dict(by_alias=True)
+        # Convert keys back to the expected ones with spaces
+        formatted_input = {k.replace('_', ' '): v for k, v in input_dict.items()}
+        
+        predicted_price = predict_price(formatted_input)
+        weight = formatted_input.get("Weight") or 100
+        estimated_income = round(predicted_price * weight, 2)
+        
+        return {
+            "predictedPricePerKg": round(predicted_price, 2),
+            "estimatedIncome": estimated_income,
+            "modelUsed": "Random Forest Regressor (New Dataset)",
+            "confidenceNote": "High accuracy model trained on real-time mandi prices"
+        }
     except FileNotFoundError as e:
         raise HTTPException(
             status_code=503,

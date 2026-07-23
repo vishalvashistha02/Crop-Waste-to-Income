@@ -283,12 +283,12 @@ function Farmer(){
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-          wasteType: form.wasteType,
-          quantityKg: parseFloat(form.quantity),
-          qualityGrade: form.grade,
-          location: form.location,
-          season: form.season,
-          demandLevel: form.demandLevel
+          Waste_Type: form.wasteType,
+          Weight: parseFloat(form.quantity),
+          Quality_Grade: form.grade,
+          District: form.location,
+          Season: form.season,
+          Demand_Level: form.demandLevel
         })
       });
       if(!res.ok) {
