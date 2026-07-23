@@ -68,12 +68,38 @@ def predict_price(input_data: dict) -> float:
         "Nearby Processing Plant": "Nearby_Processing_Plant"
     }
     
+    # Mapping frontend waste types to Crop and Waste_Type
+    frontend_waste = input_data.get("Waste Type", "")
+    if "Paddy" in frontend_waste:
+        input_data["Crop"] = "Paddy"
+        input_data["Waste Type"] = "Straw"
+    elif "Wheat" in frontend_waste:
+        input_data["Crop"] = "Wheat"
+        input_data["Waste Type"] = "Straw"
+    elif "Sugarcane" in frontend_waste:
+        input_data["Crop"] = "Sugarcane"
+        input_data["Waste Type"] = "Bagasse"
+    elif "Cotton" in frontend_waste:
+        input_data["Crop"] = "Cotton"
+        input_data["Waste Type"] = "Stalk"
+    elif "Corn" in frontend_waste or "Maize" in frontend_waste:
+        input_data["Crop"] = "Maize"
+        input_data["Waste Type"] = "Residue"
+
+    # Default means for numerics
+    numeric_defaults = {
+        "Moisture_Percentage": 19.0,
+        "Distance_to_Buyer_KM": 53.0,
+        "Storage_Days": 7.0,
+        "Transportation_Cost": 145.0
+    }
+
     # Prepare DataFrame for single row
     row = {}
     for user_key, df_key in mapping.items():
         val = input_data.get(user_key)
         if val is None and df_key not in _encoders:
-            val = 0.0 # Default for numerical
+            val = numeric_defaults.get(df_key, 0.0)
         elif val is None and df_key in _encoders:
             # Pick the most common or first class
             val = _encoders[df_key].classes_[0]
