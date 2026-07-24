@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Leaf, Upload, Truck, BarChart3, Satellite, IndianRupee, Trophy, Users, TrendingUp, Factory, Mic, Building2, MapPin, Camera, ShieldCheck, Sparkles, Navigation, Coins, Zap, Gift, CheckCircle, XCircle, ArrowRight, Quote, Star } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import './style.css';
 
 const API = '/api';
@@ -725,729 +728,442 @@ function Scanner(){
   );
 }
 
-function Pickup(){
-  const [pickupFarmers, setPickupFarmers] = useState([
-    { name: "Farmer A", qty: 100, location: "Village A", status: "Loaded", date: "2026-05-30", time: "10:00 AM", price: 3, mobile: "9876543210", wasteType: "Paddy Straw" },
-    { name: "Farmer B", qty: 200, location: "Village B", status: "Loaded", date: "2026-05-30", time: "10:30 AM", price: 3, mobile: "9876543211", wasteType: "Wheat Straw" },
-    { name: "Farmer C", qty: 300, location: "Village C", status: "Assigned", date: "2026-05-30", time: "11:00 AM", price: 3, mobile: "9876543212", wasteType: "Sugarcane Waste" }
-  ]);
 
-  const [form, setForm] = useState({
-    farmer: '',
-    mobile: '',
-    wasteType: '',
-    quantity: '',
-    location: '',
-    date: '',
-    time: '',
-    pricePerKg: ''
+// ── Animated counter hook ──────────────────────────────────────────────────
+function useCountUp(target, duration = 1200) {
+  const [val, setVal] = React.useState(0);
+  React.useEffect(() => {
+    if (target == null || isNaN(Number(target))) return;
+    const num = Number(target);
+    const steps = 40;
+    const stepMs = duration / steps;
+    let current = 0;
+    const timer = setInterval(() => {
+      current += num / steps;
+      if (current >= num) { setVal(num); clearInterval(timer); }
+      else setVal(Math.floor(current));
+    }, stepMs);
+    return () => clearInterval(timer);
+  }, [target, duration]);
+  return val;
+}
+
+// ── Metric card with count-up ─────────────────────────────────────────────
+function MetricCard({ icon, label, value, prefix = '', suffix = '', color = '#16a34a', delay = 0 }) {
+  const [visible, setVisible] = React.useState(false);
+  const num = parseFloat(String(value).replace(/[^0-9.]/g, '')) || 0;
+  const counted = useCountUp(visible ? num : 0);
+  React.useEffect(() => {
+    const t = setTimeout(() => setVisible(true), delay);
+    return () => clearTimeout(t);
+  }, [delay]);
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #0d1e13 0%, #1a2f1e 100%)',
+      border: `1px solid ${color}33`,
+      borderRadius: '16px',
+      padding: '20px',
+      display: 'flex', flexDirection: 'column', gap: '8px',
+      transition: 'transform 0.2s, box-shadow 0.2s',
+      cursor: 'default',
+      opacity: visible ? 1 : 0,
+      transform: visible ? 'translateY(0)' : 'translateY(12px)',
+      transition: 'opacity 0.5s ease, transform 0.5s ease',
+    }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = `0 8px 24px ${color}22`; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+    >
+      <div style={{ fontSize: '24px' }}>{icon}</div>
+      <div style={{ fontSize: '11px', color: '#6b8f74', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+      <div style={{ fontSize: '22px', fontWeight: 800, color }}>
+        {prefix}{isNaN(num) || num === 0 ? value : counted.toLocaleString()}{suffix}
+      </div>
+    </div>
+  );
+}
+
+// ── Leaflet Icons ─────────────────────────────────────────────────────────
+const createCustomIcon = (color) => {
+  return L.divIcon({
+    className: 'custom-leaflet-icon',
+    html: `<div style="background-color: ${color}; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
   });
+};
 
-  const [errors, setErrors] = useState({});
-  const [submitSuccess, setSubmitSuccess] = useState(false);
-  const [mlClusterInfo, setMlClusterInfo] = useState(null);
+const iconFarmer = createCustomIcon('#22c55e'); // green
+const iconCenter = createCustomIcon('#f59e0b'); // orange
+const iconYou = createCustomIcon('#3b82f6'); // blue
 
-  const clusterPickupsML = async () => {
-    try {
-      const payload = {
-        truckCapacityKg: 1000,
-        farmers: pickupFarmers.map((f, i) => ({
-          name: f.name,
-          village: f.location,
-          latitude: 27.4924 + (i * 0.01),
-          longitude: 77.6737 + (i * 0.01),
-          quantityKg: Number(f.qty)
-        }))
-      };
-      const res = await fetch(`${ML_API}/shared-pickup-ml`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-      });
-      if(!res.ok) throw new Error("API Error");
-      const data = await res.json();
-      setMlClusterInfo(data);
-    } catch(err) {
-      console.error(err);
-    }
-  };
-
+// Component to dynamically adjust map bounds based on markers
+function MapBounds({ positions }) {
+  const map = useMap();
   useEffect(() => {
-    clusterPickupsML();
-  }, [pickupFarmers]);
-
-  const getCoords = (location, idx) => {
-    const loc = location.toLowerCase();
-    if (loc.includes('village a')) return { x: 60, y: 150 };
-    if (loc.includes('village b')) return { x: 150, y: 70 };
-    if (loc.includes('village c')) return { x: 280, y: 60 };
-    if (loc.includes('mathura') || loc.includes('you')) return { x: 180, y: 180 };
-    if (loc.includes('agra')) return { x: 220, y: 150 };
-    if (loc.includes('aligarh')) return { x: 100, y: 90 };
-    
-    // Fallback coordinates spread
-    const angles = [135, 225, 315, 45, 90, 270];
-    const angle = (angles[idx % angles.length] * Math.PI) / 180;
-    const r = 50 + (idx * 20) % 70;
-    return {
-      x: Math.round(180 + r * Math.cos(angle)),
-      y: Math.round(120 + r * Math.sin(angle))
-    };
-  };
-
-  const getRoutePath = () => {
-    if (pickupFarmers.length === 0) return "M 340,180";
-    let path = "";
-    pickupFarmers.forEach((f, idx) => {
-      const coords = getCoords(f.location, idx);
-      if (idx === 0) {
-        path = `M ${coords.x},${coords.y}`;
-      } else {
-        path += ` L ${coords.x},${coords.y}`;
-      }
-    });
-    path += " L 340,180";
-    return path;
-  };
-
-  const validateForm = () => {
-    let tempErrors = {};
-    if (!form.farmer.trim()) tempErrors.farmer = 'Farmer name is required';
-    
-    if (!form.mobile.trim()) {
-      tempErrors.mobile = 'Mobile number is required';
-    } else if (!/^\d{10}$/.test(form.mobile.trim())) {
-      tempErrors.mobile = 'Mobile number must be 10 digits';
+    if (positions.length > 0) {
+      const bounds = L.latLngBounds(positions);
+      map.fitBounds(bounds, { padding: [50, 50] });
     }
+  }, [map, positions]);
+  return null;
+}
 
-    if (!form.wasteType.trim()) tempErrors.wasteType = 'Crop waste type is required';
-    
-    if (!form.quantity) {
-      tempErrors.quantity = 'Quantity available is required';
-    } else if (isNaN(form.quantity) || parseFloat(form.quantity) <= 0) {
-      tempErrors.quantity = 'Quantity must be greater than 0';
-    }
-
-    if (!form.location.trim()) tempErrors.location = 'Village/Pickup location is required';
-
-    setErrors(tempErrors);
-    return Object.keys(tempErrors).length === 0;
-  };
-
-  const submit = (e) => {
-    e.preventDefault();
-    if (!validateForm()) return;
-
-    // Convert 24hr HTML5 time to AM/PM format
-    let formattedTime = "11:30 AM";
-    if (form.time) {
-      const [hrs, mins] = form.time.split(':');
-      const h = parseInt(hrs);
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const displayHr = h % 12 || 12;
-      formattedTime = `${displayHr}:${mins} ${ampm}`;
-    }
-
-    const newFarmer = {
-      name: form.farmer,
-      mobile: form.mobile,
-      qty: parseFloat(form.quantity),
-      location: form.location,
-      wasteType: form.wasteType,
-      date: form.date || "2026-05-30",
-      time: formattedTime,
-      price: parseFloat(form.pricePerKg || 3),
-      status: "Assigned",
-      isUser: true
-    };
-
-    setPickupFarmers([...pickupFarmers, newFarmer]);
-    setSubmitSuccess(true);
-    setErrors({});
-    setForm({
-      farmer: '',
-      mobile: '',
-      wasteType: '',
-      quantity: '',
-      location: '',
-      date: '',
-      time: '',
-      pricePerKg: ''
-    });
-
-    setTimeout(() => {
-      setSubmitSuccess(false);
-    }, 4000);
-  };
-
-  // Metrics recalculations
-  const totalQuantity = pickupFarmers.reduce((sum, f) => sum + Number(f.qty || 0), 0);
-  const truckCapacity = 1000;
-  const utilization = Math.round((totalQuantity / truckCapacity) * 100);
+// ── Interactive Leaflet map visualization ─────────────────────────────────
+function InteractiveMap({ result, farmerLat, farmerLon }) {
+  if (!result || !result.cluster_center) return null;
   
-  const costWithout = pickupFarmers.length * 1500;
-  const costWith = 2700;
-  const savings = costWithout - costWith;
-  const pctSavings = costWithout > 0 ? Math.round((savings / costWithout) * 100) : 0;
+  const centerLat = result.cluster_center.lat;
+  const centerLon = result.cluster_center.lon;
+  const nearby = result.nearby_farmer_list || [];
   
-  const tripsAvoided = pickupFarmers.length - 1;
-  const co2Reduced = tripsAvoided * 15;
-  const fuelSaved = tripsAvoided * 6;
-  const distance = 18 + (pickupFarmers.length - 3) * 3; // 18km baseline, +3km per detour
+  const userPos = [farmerLat, farmerLon];
+  const centerPos = [centerLat, centerLon];
+  
+  const nearbyPositions = nearby.map(f => [f.lat, f.lon]);
+  
+  // All points to fit bounds
+  const allPositions = [userPos, centerPos, ...nearbyPositions];
+  
+  // Create polyline route: User -> Nearby 1 -> Nearby 2 -> ... -> Center
+  const routePositions = [userPos, ...nearbyPositions, centerPos];
 
-  let utilizationColor = "green";
-  if (utilization > 90) utilizationColor = "red";
-  else if (utilization > 70) utilizationColor = "amber";
+  return (
+    <div style={{ background: '#0a1a0e', borderRadius: '16px', border: '1px solid #1e3a24', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ fontSize: '13px', color: '#52a56a', fontWeight: 700, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span>🗺</span> Cluster #{result.cluster_id} — Interactive Map
+      </div>
+      
+      <div style={{ height: '280px', width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid #1e3a24' }}>
+        <MapContainer center={centerPos} zoom={10} style={{ height: '100%', width: '100%' }}>
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution="&copy; OpenStreetMap contributors"
+          />
+          
+          <MapBounds positions={allPositions} />
 
-  let truckRequired = "Mini Truck";
-  if (totalQuantity > 1000) truckRequired = "Heavy Duty Truck (AI Scaled)";
-  else if (totalQuantity > 600) truckRequired = "Standard Pickup Truck";
+          {/* User Marker */}
+          <Marker position={userPos} icon={iconYou}>
+            <Popup><strong>You</strong><br/>Lat: {farmerLat}, Lon: {farmerLon}</Popup>
+          </Marker>
+
+          {/* Cluster Center Marker */}
+          <Marker position={centerPos} icon={iconCenter}>
+            <Popup><strong>Cluster Center</strong><br/>#{result.cluster_id}</Popup>
+          </Marker>
+
+          {/* Nearby Farmers Markers */}
+          {nearby.map((f, i) => (
+            <Marker key={i} position={[f.lat, f.lon]} icon={iconFarmer}>
+              <Popup>
+                <strong>{f.name}</strong><br/>
+                {f.village}<br/>
+                {f.weight} kg
+              </Popup>
+            </Marker>
+          ))}
+          
+          {/* Suggested Pickup Route */}
+          <Polyline positions={routePositions} color="#22c55e" weight={3} dashArray="5, 10" opacity={0.7} />
+
+        </MapContainer>
+      </div>
+
+      {/* legend */}
+      <div style={{ display: 'flex', gap: '16px', marginTop: '12px', fontSize: '11px', color: '#a7f3d0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#22c55e' }}></div> Nearby Farmer
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#3b82f6' }}></div> Your Location
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#f59e0b' }}></div> Cluster Center
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Pickup Component ─────────────────────────────────────────────────
+function Pickup() {
+  const CROPS = ['Paddy','Wheat','Sugarcane','Cotton','Maize','Mustard','Bajra'];
+  const [form, setForm] = React.useState({
+    farmer_name: '', village: '', latitude: '', longitude: '',
+    crop: 'Paddy', waste_weight: ''
+  });
+  const [errors, setErrors] = React.useState({});
+  const [loading, setLoading] = React.useState(false);
+  const [result, setResult] = React.useState(null);
+  const [apiError, setApiError] = React.useState('');
+
+  const validate = () => {
+    const e = {};
+    if (!form.farmer_name.trim()) e.farmer_name = 'Farmer name is required';
+    if (!form.village.trim()) e.village = 'Village is required';
+    if (!form.latitude || isNaN(form.latitude)) e.latitude = 'Valid latitude required';
+    if (!form.longitude || isNaN(form.longitude)) e.longitude = 'Valid longitude required';
+    if (!form.waste_weight || isNaN(form.waste_weight) || Number(form.waste_weight) <= 0) e.waste_weight = 'Valid waste weight required';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const findPickup = async () => {
+    if (!validate()) return;
+    setLoading(true);
+    setResult(null);
+    setApiError('');
+    try {
+      const res = await fetch(`${API}/shared-pickup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          farmer_name: form.farmer_name,
+          village: form.village,
+          latitude: parseFloat(form.latitude),
+          longitude: parseFloat(form.longitude),
+          crop: form.crop,
+          waste_weight: parseFloat(form.waste_weight)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Server error');
+      setResult(data);
+    } catch (err) {
+      setApiError(err.message || 'Failed to connect to ML service.');
+    }
+    setLoading(false);
+  };
+
+  const inp = (field) => ({
+    value: form[field],
+    onChange: e => { setForm(f => ({ ...f, [field]: e.target.value })); setErrors(er => ({ ...er, [field]: '' })); }
+  });
 
   return (
     <section className="page">
-      <div className="logistics-banner-title">
-        <Truck size={38} className="gps-marker" style={{ color: '#16a34a' }} />
-        <div>
-          <h1>Shared Pickup System</h1>
-          <p className="page-subtitle">Reduce transportation costs by combining nearby farmers' crop waste into a single pickup.</p>
+      {/* Header */}
+      <div style={{ marginBottom: '28px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '8px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'linear-gradient(135deg,#16a34a,#15803d)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Truck size={24} color="#fff" />
+          </div>
+          <div>
+            <h1 style={{ margin: 0 }}>AI Shared Pickup System</h1>
+            <p style={{ margin: 0, color: '#52665a', fontSize: '14px' }}>K-Means ML model finds your nearest pickup cluster and calculates shared logistics.</p>
+          </div>
         </div>
       </div>
 
-      {/* Add Farmer to Shared Pickup Form */}
-      <div className="card" style={{ marginBottom: '24px' }}>
-        <div className="form-header">
-          <h2 className="form-title">Add Farmer to Shared Pickup</h2>
-          <p className="form-subtitle">Register farmer and crop details to automatically recalculate shipping routes and savings.</p>
+      {/* Input form */}
+      <div className="card" style={{ marginBottom: '28px' }}>
+        <h2 className="form-title" style={{ marginBottom: '4px' }}>Find Your Shared Pickup Cluster</h2>
+        <p className="form-subtitle" style={{ marginBottom: '20px' }}>Enter your details — the AI will find nearby farmers and group them into an optimal shared route.</p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(230px,1fr))', gap: '16px' }}>
+          {/* Farmer Name */}
+          <div className="form-group">
+            <label className="form-label">Farmer Name <span className="required-star">*</span></label>
+            <input type="text" className={`form-input ${errors.farmer_name ? 'has-error' : ''}`} placeholder="e.g. Ramesh Kumar" {...inp('farmer_name')} />
+            {errors.farmer_name ? <span className="error-message">{errors.farmer_name}</span> : <span className="helper-text">Full name of the farmer</span>}
+          </div>
+          {/* Village */}
+          <div className="form-group">
+            <label className="form-label">Village <span className="required-star">*</span></label>
+            <input type="text" className={`form-input ${errors.village ? 'has-error' : ''}`} placeholder="e.g. Raya" {...inp('village')} />
+            {errors.village ? <span className="error-message">{errors.village}</span> : <span className="helper-text">Village or town name</span>}
+          </div>
+          {/* Latitude */}
+          <div className="form-group">
+            <label className="form-label">Latitude <span className="required-star">*</span></label>
+            <input type="number" step="0.0001" className={`form-input ${errors.latitude ? 'has-error' : ''}`} placeholder="e.g. 27.4924" {...inp('latitude')} />
+            {errors.latitude ? <span className="error-message">{errors.latitude}</span> : <span className="helper-text">GPS latitude of farm</span>}
+          </div>
+          {/* Longitude */}
+          <div className="form-group">
+            <label className="form-label">Longitude <span className="required-star">*</span></label>
+            <input type="number" step="0.0001" className={`form-input ${errors.longitude ? 'has-error' : ''}`} placeholder="e.g. 77.6737" {...inp('longitude')} />
+            {errors.longitude ? <span className="error-message">{errors.longitude}</span> : <span className="helper-text">GPS longitude of farm</span>}
+          </div>
+          {/* Crop */}
+          <div className="form-group">
+            <label className="form-label">Crop</label>
+            <select className="form-input" value={form.crop} onChange={e => setForm(f => ({ ...f, crop: e.target.value }))}>
+              {CROPS.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <span className="helper-text">Type of crop grown</span>
+          </div>
+          {/* Waste Weight */}
+          <div className="form-group">
+            <label className="form-label">Waste Weight (KG) <span className="required-star">*</span></label>
+            <input type="number" min="100" max="2000" className={`form-input ${errors.waste_weight ? 'has-error' : ''}`} placeholder="e.g. 450" {...inp('waste_weight')} />
+            {errors.waste_weight ? <span className="error-message">{errors.waste_weight}</span> : <span className="helper-text">Available waste (100–2000 kg)</span>}
+          </div>
         </div>
 
-        {submitSuccess && (
-          <div className="success-alert">
-            <ShieldCheck size={20} />
-            <span>Farmer added to shared pickup group successfully</span>
+        <div style={{ marginTop: '20px', display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+          <button
+            onClick={findPickup}
+            disabled={loading}
+            style={{
+              padding: '13px 32px', fontSize: '15px', fontWeight: 700, borderRadius: '12px',
+              background: loading ? '#1e3a24' : 'linear-gradient(135deg,#16a34a,#15803d)',
+              color: '#fff', border: 'none', cursor: loading ? 'wait' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: '10px',
+              transition: 'transform 0.15s, opacity 0.15s',
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loading ? (
+              <>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 1s linear infinite' }}>
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                </svg>
+                AI Clustering...
+              </>
+            ) : (
+              <><Sparkles size={18} /> Find Shared Pickup</>
+            )}
+          </button>
+          {result && (
+            <button onClick={() => setResult(null)} style={{ padding: '13px 20px', fontSize: '14px', borderRadius: '12px', background: 'transparent', border: '1px solid #1e3a24', color: '#52665a', cursor: 'pointer' }}>
+              Clear Results
+            </button>
+          )}
+        </div>
+
+        {apiError && (
+          <div style={{ marginTop: '16px', padding: '12px 16px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '10px', color: '#dc2626', fontSize: '14px', fontWeight: 600 }}>
+            ⚠ {apiError}
           </div>
         )}
-
-        <form onSubmit={submit}>
-          <div className="pickup-form-grid">
-            {/* Farmer Name */}
-            <div className="form-group">
-              <label className="form-label">
-                Farmer Name
-                <span className="required-star">*</span>
-              </label>
-              <input
-                type="text"
-                className={`form-input ${errors.farmer ? 'has-error' : ''}`}
-                value={form.farmer}
-                placeholder="Enter farmer name"
-                onChange={e => {
-                  setForm({...form, farmer: e.target.value});
-                  if (errors.farmer) setErrors({...errors, farmer: ''});
-                }}
-              />
-              {errors.farmer ? (
-                <span className="error-message">{errors.farmer}</span>
-              ) : (
-                <span className="helper-text">Example: Ramesh Kumar</span>
-              )}
-            </div>
-
-            {/* Mobile Number */}
-            <div className="form-group">
-              <label className="form-label">
-                Mobile Number
-                <span className="required-star">*</span>
-              </label>
-              <input
-                type="tel"
-                className={`form-input ${errors.mobile ? 'has-error' : ''}`}
-                value={form.mobile}
-                placeholder="Enter 10-digit mobile number"
-                onChange={e => {
-                  setForm({...form, mobile: e.target.value});
-                  if (errors.mobile) setErrors({...errors, mobile: ''});
-                }}
-              />
-              {errors.mobile ? (
-                <span className="error-message">{errors.mobile}</span>
-              ) : (
-                <span className="helper-text">Used for coordination</span>
-              )}
-            </div>
-
-            {/* Crop Waste Type */}
-            <div className="form-group">
-              <label className="form-label">
-                Crop Waste Type
-                <span className="required-star">*</span>
-              </label>
-              <input
-                type="text"
-                list="pickup-wastes"
-                className={`form-input ${errors.wasteType ? 'has-error' : ''}`}
-                value={form.wasteType}
-                placeholder="Select or enter crop waste type"
-                onChange={e => {
-                  setForm({...form, wasteType: e.target.value});
-                  if (errors.wasteType) setErrors({...errors, wasteType: ''});
-                }}
-              />
-              <datalist id="pickup-wastes">
-                <option value="Paddy Straw" />
-                <option value="Wheat Straw" />
-                <option value="Sugarcane Waste" />
-                <option value="Cotton Waste" />
-              </datalist>
-              {errors.wasteType ? (
-                <span className="error-message">{errors.wasteType}</span>
-              ) : (
-                <span className="helper-text">Examples: Paddy Straw, Wheat Straw, Sugarcane Waste</span>
-              )}
-            </div>
-
-            {/* Quantity */}
-            <div className="form-group">
-              <label className="form-label">
-                Quantity Available
-                <span className="required-star">*</span>
-              </label>
-              <input
-                type="number"
-                className={`form-input ${errors.quantity ? 'has-error' : ''}`}
-                value={form.quantity}
-                placeholder="Enter quantity in kg"
-                onChange={e => {
-                  setForm({...form, quantity: e.target.value});
-                  if (errors.quantity) setErrors({...errors, quantity: ''});
-                }}
-              />
-              {errors.quantity ? (
-                <span className="error-message">{errors.quantity}</span>
-              ) : (
-                <span className="helper-text">Example: 250</span>
-              )}
-            </div>
-
-            {/* Village / Pickup Location */}
-            <div className="form-group">
-              <label className="form-label">
-                Village / Pickup Location
-                <span className="required-star">*</span>
-              </label>
-              <input
-                type="text"
-                className={`form-input ${errors.location ? 'has-error' : ''}`}
-                value={form.location}
-                placeholder="Enter village or city name"
-                onChange={e => {
-                  setForm({...form, location: e.target.value});
-                  if (errors.location) setErrors({...errors, location: ''});
-                }}
-              />
-              {errors.location ? (
-                <span className="error-message">{errors.location}</span>
-              ) : (
-                <span className="helper-text">Example: Village A, Mathura</span>
-              )}
-            </div>
-
-            {/* Preferred Pickup Date */}
-            <div className="form-group">
-              <label className="form-label">
-                Preferred Pickup Date
-              </label>
-              <input
-                type="date"
-                className="form-input"
-                value={form.date}
-                onChange={e => setForm({...form, date: e.target.value})}
-              />
-              <span className="helper-text">Desired scheduling day</span>
-            </div>
-
-            {/* Preferred Pickup Time */}
-            <div className="form-group">
-              <label className="form-label">
-                Preferred Pickup Time
-              </label>
-              <input
-                type="time"
-                className="form-input"
-                value={form.time}
-                onChange={e => setForm({...form, time: e.target.value})}
-              />
-              <span className="helper-text">Desired pickup window</span>
-            </div>
-
-            {/* Expected Price */}
-            <div className="form-group">
-              <label className="form-label">
-                Expected Price Per KG
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                className="form-input"
-                value={form.pricePerKg}
-                placeholder="Example: 3"
-                onChange={e => setForm({...form, pricePerKg: e.target.value})}
-              />
-              <span className="helper-text">Example ₹3/kg</span>
-            </div>
-            
-            <div className="pickup-form-submit-row">
-              <button className="submit-btn" type="submit" style={{ padding: '12px 24px' }}>
-                Add to Pickup Group
-              </button>
-            </div>
-          </div>
-        </form>
       </div>
 
-      {/* AI Recommendation Box */}
-      <div className="recommendation-box">
-        <Sparkles className="recommendation-icon" size={24} />
-        <div className="recommendation-content">
-          <div className="recommendation-tag">
-            <div className="recommendation-pulse"></div>
-            AI Optimization Alert
-          </div>
-          <p>
-            {pickupFarmers.length > 3
-              ? "Optimal logistics routing applied! High utilization achieved. Processing centers are notified of bulk delivery." 
-              : "AI recommends waiting 2 more days. Nearby farmers can increase total load from 600 kg to 900 kg, reducing logistics cost by 35%."
-            }
-          </p>
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="card" style={{ marginBottom: '28px', textAlign: 'center', padding: '48px 20px' }}>
+          <div style={{ width: '56px', height: '56px', borderRadius: '50%', border: '4px solid #1e3a24', borderTopColor: '#16a34a', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
+          <p style={{ color: '#52665a', fontWeight: 600 }}>K-Means model is predicting your cluster...</p>
         </div>
-      </div>
+      )}
 
-      {/* Top Savings & Impact Row */}
-      <div className="grid two">
-        {/* Savings Dashboard */}
-        <div className="card stat-glow-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Coins size={22} style={{ color: '#16a34a' }} />
-            <h3 style={{ margin: 0 }}>Savings Dashboard</h3>
+      {/* Results Dashboard */}
+      {result && !loading && (
+        <div style={{ animation: 'fadeIn 0.6s ease' }}>
+          {/* AI Badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+            <div style={{ padding: '6px 14px', background: 'linear-gradient(135deg,#16a34a22,#15803d22)', border: '1px solid #16a34a55', borderRadius: '20px', fontSize: '13px', color: '#4ade80', fontWeight: 700 }}>
+              ✦ AI Prediction Complete
+            </div>
+            <div style={{ padding: '6px 14px', background: '#0d1e1322', border: '1px solid #1e3a24', borderRadius: '20px', fontSize: '13px', color: '#52665a', fontWeight: 600 }}>
+              Cluster #{result.cluster_id} · {result.nearby_farmers} Farmers
+            </div>
           </div>
-          <p>Combined transportation routing reduces total logistics expense.</p>
-          
-          <div className="savings-bar-container">
-            <div className="savings-bar-wrapper">
-              <span className="savings-bar-label">Individual Cost</span>
-              <div className="savings-bar-track">
-                <div className="savings-bar-fill normal" style={{ width: '100%' }}></div>
+
+          {/* 8-metric grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: '14px', marginBottom: '24px' }}>
+            <MetricCard icon="🗺" label="Cluster ID" value={result.cluster_id} prefix="#" color="#4ade80" delay={0} />
+            <MetricCard icon="👨‍🌾" label="Nearby Farmers" value={result.nearby_farmers} suffix=" farmers" color="#34d399" delay={80} />
+            <MetricCard icon="📦" label="Total Waste" value={result.total_waste} suffix=" kg" color="#22d3ee" delay={160} />
+            <MetricCard icon="💰" label="Pickup Cost" value={result.estimated_pickup_cost} prefix="₹" color="#a78bfa" delay={240} />
+            <MetricCard icon="🤝" label="Cost Per Farmer" value={result.cost_per_farmer} prefix="₹" color="#f472b6" delay={320} />
+            <MetricCard icon="🌱" label="CO₂ Saved" value={result.co2_saved} color="#4ade80" delay={400} />
+            <MetricCard icon="💸" label="Money Saved" value={result.money_saved} color="#fbbf24" delay={480} />
+            <MetricCard icon="📍" label="Route Distance" value={result.distance} color="#60a5fa" delay={560} />
+          </div>
+
+          {/* Vehicle card */}
+          <div className="card" style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '20px', background: 'linear-gradient(135deg,#0d1e13,#132a17)' }}>
+            <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: 'linear-gradient(135deg,#166534,#15803d)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Truck size={32} color="#4ade80" />
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: '#52665a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>Recommended Vehicle</div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: '#4ade80' }}>{result.recommended_vehicle}</div>
+              <div style={{ fontSize: '13px', color: '#6b8f74', marginTop: '2px' }}>
+                {result.recommended_vehicle === 'Mini Truck' && 'Suitable for ≤500 kg total cluster waste.'}
+                {result.recommended_vehicle === 'Truck' && 'Suitable for 500–1500 kg total cluster waste.'}
+                {result.recommended_vehicle === 'Large Truck' && 'Required for 1500+ kg high-volume cluster.'}
               </div>
-              <span className="savings-bar-value">₹{costWithout}</span>
-            </div>
-            <div className="savings-bar-wrapper">
-              <span className="savings-bar-label">Group Shared Cost</span>
-              <div className="savings-bar-track">
-                <div className="savings-bar-fill optimized" style={{ width: `${(costWith / costWithout) * 100}%` }}></div>
-              </div>
-              <span className="savings-bar-value">₹{costWith}</span>
             </div>
           </div>
-          <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', color: '#52665a', fontWeight: 600 }}>Total Group Savings:</span>
-            <span style={{ fontSize: '18px', color: '#16a34a', fontWeight: 800 }}>₹{savings} ({pctSavings}% Saved)</span>
-          </div>
-        </div>
 
-        {/* Environmental Impact Card */}
-        <div className="card stat-glow-card blue">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Leaf size={22} style={{ color: '#2563eb' }} />
-            <h3 style={{ margin: 0 }}>Environmental Impact</h3>
-          </div>
-          <p>Reduced logistics footprints directly prevent rural CO₂ emissions.</p>
-          
-          <div className="grid three" style={{ margin: '14px 0 0 0' }}>
-            <div style={{ textAlign: 'center' }}>
-              <h4 style={{ margin: '0 0 4px 0', fontSize: '20px', color: '#2563eb' }}>{fuelSaved} Liters</h4>
-              <small style={{ color: '#52665a', fontWeight: 600 }}>Fuel Saved</small>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <h4 style={{ margin: '0 0 4px 0', fontSize: '20px', color: '#2563eb' }}>{co2Reduced} kg</h4>
-              <small style={{ color: '#52665a', fontWeight: 600 }}>CO₂ Reduced</small>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <h4 style={{ margin: '0 0 4px 0', fontSize: '20px', color: '#2563eb' }}>{tripsAvoided} trips</h4>
-              <small style={{ color: '#52665a', fontWeight: 600 }}>Trips Avoided</small>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="logistics-grid">
-        {/* Left Column: Farmers, Utilization, Schedule */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-          
-          {/* Nearby Farmers Grouping */}
-          <div className="card">
-            <h3>Nearby Farmers Grouping</h3>
-            <p>Farmers currently grouped in your local zone (Mathura Rural):</p>
-            
-            <div className="farmers-group-list">
-              {pickupFarmers.map((f, i) => (
-                <div key={i} className={`farmer-group-item ${f.isUser ? 'user-item' : ''}`}>
-                  <div className="farmer-group-name">
-                    <Users size={16} style={{ color: f.isUser ? '#2563eb' : '#16a34a' }} />
-                    <span>{f.name}</span>
-                    {f.isUser && <span className="pill" style={{ padding: '2px 8px', fontSize: '10px', background: '#dbeafe', color: '#2563eb' }}>New</span>}
+          {/* Two-column: Nearby farmers + Cluster Viz */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
+            {/* Nearby Farmers list */}
+            <div className="card" style={{ background: 'linear-gradient(135deg,#0d1e13,#132a17)' }}>
+              <h3 style={{ margin: '0 0 14px 0', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Users size={18} /> Closest Farmers in Cluster
+              </h3>
+              {(result.nearby_farmer_list || []).length === 0 && (
+                <p style={{ color: '#52665a', fontSize: '14px' }}>No farmer detail available.</p>
+              )}
+              {(result.nearby_farmer_list || []).map((f, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 14px', borderRadius: '10px', marginBottom: '8px',
+                  background: '#0a1a0e', border: '1px solid #1e3a24',
+                  transition: 'border-color 0.2s',
+                }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = '#22c55e55'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = '#1e3a24'}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#e2f0e8', fontSize: '14px' }}>{f.name}</div>
+                    <div style={{ fontSize: '12px', color: '#52665a', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                      <MapPin size={11} style={{ color: '#4ade80' }} />{f.village}
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span className="farmer-group-qty">{f.qty} kg</span>
-                    <span className="pill" style={{ 
-                      padding: '2px 8px', 
-                      fontSize: '10px', 
-                      background: f.status === 'Loaded' ? '#dcfce7' : f.status === 'Joined' ? '#dbeafe' : '#fef3c7',
-                      color: f.status === 'Loaded' ? '#166534' : f.status === 'Joined' ? '#2563eb' : '#b45309'
-                    }}>
-                      {f.status}
-                    </span>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#4ade80' }}>{f.weight?.toFixed(0)} kg</div>
+                    <div style={{ fontSize: '11px', color: '#52665a', marginTop: '2px' }}>{f.distance_km} km away</div>
                   </div>
                 </div>
               ))}
-            </div>
-
-            <div className="progress-container">
-              <div className="progress-label-row">
-                <span>Total Group Quantity:</span>
-                <span>{totalQuantity} kg</span>
-              </div>
-              <div className="progress-track">
-                <div className="progress-fill" style={{ width: `${Math.min(utilization, 100)}%` }}></div>
+              <div style={{ fontSize: '12px', color: '#52665a', marginTop: '8px', padding: '8px 12px', background: '#0a1a0e', borderRadius: '8px', border: '1px solid #1e3a24' }}>
+                + {Math.max(0, result.nearby_farmers - 1 - (result.nearby_farmer_list?.length || 0))} more farmers in cluster not shown
               </div>
             </div>
+
+            {/* Cluster Viz */}
+            <InteractiveMap result={result} farmerLat={parseFloat(form.latitude)} farmerLon={parseFloat(form.longitude)} />
           </div>
 
-          {/* Truck Utilization Card */}
-          <div className="card">
-            <h3>Truck Utilization</h3>
-            <p>Logistics vehicle status assigned for this shared route.</p>
-            
-            <div className="utilization-chart-container">
-              <svg viewBox="0 0 36 36" className={`circular-chart ${utilizationColor}`}>
-                <path className="circle-bg"
-                  d="M18 2.0845
-                    a 15.9155 15.9155 0 0 1 0 31.831
-                    a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
-                <path className="circle"
-                  strokeDasharray={`${Math.min(utilization, 100)}, 100`}
-                  d="M18 2.0845
-                    a 15.9155 15.9155 0 0 1 0 31.831
-                    a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
-                <text x="18" y="18.5" className="chart-percentage">{utilization}%</text>
-                <text x="18" y="24" className="chart-label">LOAD</text>
-              </svg>
-              
-              <div className="utilization-stats">
-                <div className="utilization-stat-row">Vehicle: <b>{truckRequired}</b></div>
-                <div className="utilization-stat-row">Capacity: <b>{truckCapacity} kg</b></div>
-                <div className="utilization-stat-row">Current Load: <b>{totalQuantity} kg</b></div>
-                <div className="utilization-stat-row">Space Status: <b>{totalQuantity > truckCapacity ? `${totalQuantity - truckCapacity} kg Overloaded` : `${truckCapacity - totalQuantity} kg Left`}</b></div>
-              </div>
+          {/* Route Summary */}
+          <div className="card" style={{ background: 'linear-gradient(135deg,#0d1e13,#132a17)' }}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Navigation size={18} /> Pickup Route Summary
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: '12px' }}>
+              {[
+                { label: 'Total Route', value: result.distance, icon: '📍' },
+                { label: 'Cluster ID', value: `#${result.cluster_id}`, icon: '🗺' },
+                { label: 'Farmers Grouped', value: `${result.nearby_farmers}`, icon: '👨‍🌾' },
+                { label: 'Vehicle', value: result.recommended_vehicle, icon: '🚚' },
+                { label: 'Total Waste', value: `${result.total_waste} kg`, icon: '📦' },
+                { label: 'CO₂ Saved', value: result.co2_saved, icon: '🌱' },
+              ].map((s, i) => (
+                <div key={i} style={{ padding: '12px 14px', background: '#0a1a0e', borderRadius: '10px', border: '1px solid #1e3a24' }}>
+                  <div style={{ fontSize: '18px', marginBottom: '4px' }}>{s.icon}</div>
+                  <div style={{ fontSize: '11px', color: '#52665a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.label}</div>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#e2f0e8', marginTop: '2px' }}>{s.value}</div>
+                </div>
+              ))}
             </div>
           </div>
-
-          {/* Pickup Schedule Table */}
-          <div className="card">
-            <h3>Pickup Schedule</h3>
-            <div className="pickup-table-wrapper">
-              <table className="pickup-table">
-                <thead>
-                  <tr>
-                    <th>Farmer</th>
-                    <th>Quantity</th>
-                    <th>Village</th>
-                    <th>Pickup Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pickupFarmers.map((f, i) => (
-                    <tr key={i} className={f.isUser ? 'user-row' : ''}>
-                      <td><b>{f.name}</b> {f.isUser && <small style={{ color: '#2563eb' }}>(New)</small>}</td>
-                      <td><span className="badge-qty">{f.qty} kg</span></td>
-                      <td>{f.location}</td>
-                      <td><span className="badge-time">{f.time}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
         </div>
+      )}
 
-        {/* Right Column: GPS Map & Route Panel */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-          
-          {/* GPS Live Map */}
-          <div className="card" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h3 style={{ margin: 0 }}>Live GPS Route Optimization</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#16a34a', fontWeight: 'bold' }}>
-                <div className="gps-map-overlay-pulse"></div> Live Tracker
-              </div>
-            </div>
-            
-            <div className="gps-map-container">
-              <div className="gps-map-overlay">
-                <Navigation size={14} style={{ transform: 'rotate(45deg)' }} />
-                <span>AI Optimized Multi-Stop Route</span>
-              </div>
-
-              <svg width="100%" height="100%" viewBox="0 0 400 240">
-                {/* Background Grids */}
-                <g opacity="0.15">
-                  <line x1="50" y1="0" x2="50" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="100" y1="0" x2="100" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="150" y1="0" x2="150" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="200" y1="0" x2="200" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="250" y1="0" x2="250" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="300" y1="0" x2="300" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="350" y1="0" x2="350" y2="240" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  
-                  <line x1="0" y1="40" x2="400" y2="40" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="0" y1="80" x2="400" y2="80" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="0" y1="120" x2="400" y2="120" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="0" y1="160" x2="400" y2="160" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                  <line x1="0" y1="200" x2="400" y2="200" stroke="#22c55e" strokeWidth="1" strokeDasharray="3 3" />
-                </g>
-
-                {/* Road Network (Background roads) */}
-                <g opacity="0.3" stroke="#1b3a24" strokeWidth="6" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M 30,130 Q 80,180 150,70" />
-                  <path d="M 150,70 L 280,60" />
-                  <path d="M 280,60 Q 300,120 340,180" />
-                  <path d="M 150,70 Q 160,130 180,180" />
-                  <path d="M 180,180 Q 240,140 280,60" />
-                </g>
-
-                {/* Route line */}
-                <path
-                  id="route-path"
-                  d={getRoutePath()}
-                  fill="none"
-                  stroke="#22c55e"
-                  strokeWidth="3.5"
-                  className="gps-route-line"
-                />
-
-                {/* Truck icon moving along path */}
-                <g>
-                  <circle r="7" fill="#ffffff" stroke="#16a34a" strokeWidth="3">
-                    <animateMotion
-                      dur="8s"
-                      repeatCount="indefinite"
-                      path={getRoutePath()}
-                    />
-                  </circle>
-                </g>
-
-                {/* Nodes markers */}
-                {pickupFarmers.map((f, idx) => {
-                  const coords = getCoords(f.location, idx);
-                  return (
-                    <g transform={`translate(${coords.x}, ${coords.y})`} key={idx}>
-                      {f.isUser ? (
-                        <>
-                          <circle r="16" fill="none" stroke="#3b82f6" strokeWidth="1.5" className="gps-pulse-ring" />
-                          <circle r="12" fill="#0d1e13" stroke="#3b82f6" strokeWidth="2" />
-                          <circle r="5" fill="#3b82f6" />
-                        </>
-                      ) : (
-                        <>
-                          <circle r="12" fill="#0d1e13" stroke="#22c55e" strokeWidth="1.5" />
-                          <circle r="5" fill="#22c55e" />
-                        </>
-                      )}
-                      <text y="-18" fontSize="9" fill={f.isUser ? "#93c5fd" : "#a7f3d0"} fontWeight="bold" textAnchor="middle">
-                        {f.name}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                {/* Processing Center Center Marker */}
-                <g transform="translate(340, 180)">
-                  <rect x="-10" y="-10" width="20" height="20" rx="3" fill="#ca8a04" />
-                  <Factory size={12} style={{ color: '#fff' }} x="-6" y="-6" />
-                  <text y="22" fontSize="10" fill="#fde047" fontWeight="bold" textAnchor="middle">Center</text>
-                </g>
-              </svg>
-
-              {/* GPS Map Legend */}
-              <div className="gps-legend">
-                <div className="gps-legend-item">
-                  <div className="gps-legend-color" style={{ backgroundColor: '#22c55e' }}></div>
-                  <span>Farmers Grouped</span>
-                </div>
-                <div className="gps-legend-item">
-                  <div className="gps-legend-color" style={{ backgroundColor: '#3b82f6' }}></div>
-                  <span>New Farm (Added)</span>
-                </div>
-                <div className="gps-legend-item">
-                  <div className="gps-legend-color" style={{ backgroundColor: '#ca8a04', borderRadius: '2px' }}></div>
-                  <span>Processing Plant</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Route Optimization Panel */}
-          <div className="card">
-            <h3>AI Route Optimization Panel</h3>
-            <p>Logistics route compiled by the AI coordination engine (Model: {mlClusterInfo?.modelUsed || 'Calculating...'}):</p>
-            {mlClusterInfo && mlClusterInfo.clusters && mlClusterInfo.clusters.map((cluster, cidx) => (
-              <div key={cidx} style={{marginBottom:'24px', background:'#f8faf9', padding:'16px', borderRadius:'12px', border:'1px solid #dcfce7'}}>
-                <h4 style={{margin:0, color:'#166534', marginBottom:'8px'}}>Cluster {cluster.clusterId}</h4>
-                <p style={{fontSize:'14px', margin:'0 0 8px 0'}}><b>Farmers:</b> {cluster.farmers.join(', ')}</p>
-                <p style={{fontSize:'14px', margin:'0 0 8px 0'}}><b>Total Weight:</b> {cluster.totalQuantityKg} kg (Utilization: {cluster.truckUtilization}%)</p>
-                <p style={{fontSize:'14px', margin:0, color:'#15803d'}}><b>Route:</b> {cluster.suggestedRoute}</p>
-              </div>
-            ))}
-            
-            <div className="route-flow">
-              {pickupFarmers.map((f, idx) => {
-                const coords = getCoords(f.location, idx);
-                return (
-                  <div className="route-step" key={idx}>
-                    <div className={f.isUser ? "route-dot user" : "route-dot"}>
-                      {idx + 1}
-                    </div>
-                    <div className="route-line-vertical"></div>
-                    <div className="route-info">
-                      <span className="route-node-name">{f.location}</span>
-                      <span className="route-node-detail">{f.name} ({f.qty} kg) • Scheduled at {f.time}</span>
-                    </div>
-                  </div>
-                );
-              })}
-              <div className="route-step">
-                <div className="route-dot center">
-                  {pickupFarmers.length + 1}
-                </div>
-                <div className="route-line-vertical"></div>
-                <div className="route-info">
-                  <span className="route-node-name">Processing Center</span>
-                  <span className="route-node-detail">Mathura Biochar Plant</span>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #e8f5ec', display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-              <div>Distance: <b>{distance} km</b></div>
-              <div>Fuel Saved: <b>{fuelSaved} Liters</b></div>
-              <div>Cost Saved: <b style={{ color: '#16a34a' }}>₹{savings}</b></div>
-            </div>
-          </div>
-
+      {/* Empty state */}
+      {!result && !loading && (
+        <div className="card" style={{ textAlign: 'center', padding: '60px 20px', background: 'linear-gradient(135deg,#0a1a0e,#0d1e13)' }}>
+          <Truck size={52} color="#1e3a24" style={{ marginBottom: '16px' }} />
+          <h3 style={{ color: '#2d4a35', marginBottom: '8px' }}>No Prediction Yet</h3>
+          <p style={{ color: '#3a5542', maxWidth: '360px', margin: '0 auto', fontSize: '14px' }}>
+            Fill in the form above and click <strong style={{ color: '#4ade80' }}>Find Shared Pickup</strong> to let the K-Means model cluster your farm with nearby farmers.
+          </p>
         </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -2022,4 +1738,3 @@ function AIPredictionResult({ mlPriceInfo, form }) {
   );
 }
 // ─── End AIPredictionResult ─────────────────────────────────────────
-

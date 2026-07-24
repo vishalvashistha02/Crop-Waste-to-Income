@@ -3,6 +3,8 @@ const cors = require('cors');
 const path = require('path');
 const { execFile } = require('child_process');
 const multer = require('multer');
+const fs = require('fs');
+const os = require('os');
 
 // Load .env if dotenv is available
 try { require('dotenv').config(); } catch (e) { /* dotenv not installed, use defaults */ }
@@ -33,11 +35,24 @@ app.use(cors({
 app.use(express.json());
 
 // ─── Helper: Run Python ML CLI ──────────────────────────────────────────────
+// Uses a temp file to pass the JSON payload to Python.
+// This avoids Windows shell quote-mangling when JSON is passed as a CLI argument.
 
 function runML(operation, payload) {
   return new Promise((resolve, reject) => {
-    const args = [CLI_RUNNER, operation, JSON.stringify(payload)];
-    execFile(PYTHON_CMD, args, { cwd: ML_SERVICE_DIR, timeout: 30000 }, (err, stdout, stderr) => {
+    // Write payload to a temp file
+    const tmpFile = path.join(os.tmpdir(), `agriwastex_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
+    try {
+      fs.writeFileSync(tmpFile, JSON.stringify(payload), 'utf8');
+    } catch (writeErr) {
+      return reject(new Error(`Failed to write temp file: ${writeErr.message}`));
+    }
+
+    const args = [CLI_RUNNER, operation, '--file', tmpFile];
+    execFile(PYTHON_CMD, args, { cwd: ML_SERVICE_DIR, timeout: 60000 }, (err, stdout, stderr) => {
+      // Always clean up the temp file
+      try { fs.unlinkSync(tmpFile); } catch (_) {}
+
       if (err) {
         console.error(`[ML ${operation}] Error:`, err.message);
         if (stderr) console.error(`[ML ${operation}] Stderr:`, stderr);
@@ -105,10 +120,19 @@ app.post('/api/scan', (req, res) => {
   });
 });
 
-app.get('/api/shared-pickup', (req, res) => {
-  const mathura = listings.filter(x => x.location.toLowerCase().includes('mathura'));
-  const total = mathura.reduce((sum, x) => sum + Number(x.quantity || 0), 0);
-  res.json({ group: mathura, totalQuantity: `${total} kg`, truckRequired: total >= 500 ? 'Mini Truck' : 'Small Pickup', estimatedCostSaved: '₹1,800' });
+// New shared-pickup endpoint that calls the Python ML Service
+app.post('/api/shared-pickup', async (req, res) => {
+  try {
+    // Expected input: { farmer_name, village, latitude, longitude, waste_weight, crop }
+    if (!req.body.latitude || !req.body.longitude || !req.body.waste_weight) {
+      return res.status(400).json({ error: "Missing required fields: latitude, longitude, and waste_weight." });
+    }
+    const result = await runML('shared_pickup', req.body);
+    res.json(result);
+  } catch (err) {
+    console.error("Shared Pickup ML Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/impact', (req, res) => {
@@ -152,15 +176,7 @@ app.post('/api/price-prediction-ml', async (req, res) => {
   }
 });
 
-// POST /api/shared-pickup-ml — ML Shared Pickup Clustering
-app.post('/api/shared-pickup-ml', async (req, res) => {
-  try {
-    const result = await runML('shared_pickup', req.body);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// POST /api/shared-pickup-ml — Replaced by POST /api/shared-pickup above
 
 // POST /api/green-score — ML Green Score
 app.post('/api/green-score', async (req, res) => {

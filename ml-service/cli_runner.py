@@ -26,15 +26,27 @@ from utils.impact_calculator import calculate_impact
 
 def main():
     if len(sys.argv) < 3:
-        print(json.dumps({"error": "Usage: python cli_runner.py <operation> '<json_payload>'"}))
+        print(json.dumps({"error": "Usage: python cli_runner.py <operation> --file <path> | '<json>'"})) 
         sys.exit(1)
 
     operation = sys.argv[1]
-    try:
-        payload = json.loads(sys.argv[2])
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"Invalid JSON payload: {str(e)}"}))
-        sys.exit(1)
+
+    # Support --file <path> for reliable cross-platform JSON passing (avoids Windows quote mangling)
+    if len(sys.argv) >= 4 and sys.argv[2] == '--file':
+        filepath = sys.argv[3]
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except Exception as e:
+            print(json.dumps({"error": f"Failed to read payload file: {str(e)}"}))
+            sys.exit(1)
+    else:
+        # Fallback: inline JSON string (legacy / non-Windows)
+        try:
+            payload = json.loads(sys.argv[2])
+        except json.JSONDecodeError as e:
+            print(json.dumps({"error": f"Invalid JSON payload: {str(e)}"}))
+            sys.exit(1)
 
     try:
         if operation == "predict_price":
